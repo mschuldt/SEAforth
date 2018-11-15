@@ -1,0 +1,167 @@
+cr .( $Id: neighbor-lib.mf,v 1.3 2006-03-25 00:56:02 michael Exp $ ) \ john: common neighbor routines for rom & ram
+
+\ 01/07/06  moved shared routines here; more to be added
+\ 01/21/06  factored even more, began documentation
+\ 01/21/06 more stuff added
+\ 2/10/06 jr new descriptor format
+\ 2/17/06 jr removed ntjump (made part of descriptor) ##### REST ISN'T ACCURATE NOW
+
+0 [if] \ -----------------------------------------------------------------------
+
+   These routines assume that the desired neighbor has been 'wakened' from
+ possible multi-port sleep and are waiting on the port specified in the node's
+ A register. Setting the neighbor's A register is done separately from moving
+ data between the nodes.
+
+   Some of these routines will be squeezed into niches in the roms, but the
+ bulk of then are meant to be copied from this file into your ram code only
+ where necessary. The neighbor code executes in its port, using no memory
+ there.
+
+   Some neighbor code ends with a  -;  or  ;  which ends the neighbor access,
+ returning the neighbor to the routine which called the port, usually 'pause'.
+ All other neighbor code returns to the port for another opcode. You may want
+ to change this behavior when you incorporate these routines.
+
+   A 'neighbor address' may be constructed at compile time into a constant or
+ calculated at run time. It resembles a route descriptor, but is limited to
+ no more than four descriptors to allow a full 9-bit address in the destination
+ node. 'wake' sets the current node's A register according to the lowest NSEW
+ descriptor and returns the remainder of the neighbor address. If this is passed
+ to the neighbor's 'wake' routine, that neighbor's neighbor is reached, until
+ the destination node is reached.
+
+
+   Writing to a neighbor might look like this:
+
+[ 9 node ! ]
+
+$xxx fwd table
+
+[ 10 node ! ]
+
+$000 org
+
+: table! ( n -- )
+   [ route EAST 9 's table neighbor ]# ....     \ wake neighbor node 9
+   na!             \ set 9's A register
+   !na -; ( +4)    \ store data
+
+
+
+   Reading a neighbor's neighbor might look like this:
+
+[ 17 node ! ]
+
+$xxx fwd data
+
+[ 10 node ! ]
+
+$000 org
+
+
+: data@ ( -- n )
+   [ route NORTH WEST 17 's data neighbor ]# ....      \ wake neighbor node 16
+   nwake           \ wake its neighbor node 17
+   nna!            \ set 17's A register
+   @nna -; ( +5)   \ fetch data
+
+\ NOTE: each word of these routines might be named and then called separately
+
+[then]
+
+\ ------------------------------------------------------------------------------
+\ words that execute on one of four neighbors
+
+\ --local code--   --neighbor code--
+\                   executes in port
+
+: na! ( adr -- )   \ set neighbor's A register for data access
+   @p+ !a !a ;       @p+ a! . . ( -- ) ( +2)
+
+
+: njump ( adr -- ) \ neighbor jumps to adr, returning to port's caller
+   @p+ !a !a ;       @p+ push ; ( -- ) ( +2)
+
+: ncall ( adr -- ) \ neighbor calls adr, returning to port
+   @p+ !a a@ .       @p+ push . . ( -- )  \ port is same address in both nodes!
+   !a njump -; ( +3)
+
+\ ;:  will make  ncall  as small/fast as  njump
+
+\ : ncall ( adr -- ) \ neighbor calls adr, returning to port
+\    @p+ !a !a ;       @p+ push ;: ( -- ) ( +2)
+
+
+: <n ( -- n )      \ get 1 word from neighbor's stack
+   @p+ !a @a ;       !p+ ; ( n -- ) ( +2)
+
+: 4<n ( -- n4 n3 n2 n1 ) \ get 4 words from neighbor's stack (in reverse order!!)
+   @p+ !a @a .       !p+ !p+ !p+ !p+ ( n1 n2 n3 n4 -- )
+   @a @a @a ;        ( +3)
+
+: @na ( -- n )     \ fetch from a neighbor's data space
+   @p+ !a @a ;       @a !p+ ; ( -- ) ( +2)
+
+: @na+ ( -- n )    \ fetch from a neighbor's data space and increment its A
+   @p+ !a @a ;       @a+ !p+ ; ( -- ) ( +2)
+
+: >n ( n -- )      \ put 1 word onto neighbor's stack
+   @p+ !a !a ;       @p+ . . . ( -- n ) ( +2)
+
+: 4>n ( n1 n2 n3 n4 -- ) \ put 4 words onto neighbor's stack (in reverse order!!)
+   @p+ !a !a .       @p+ @p+ @p+ @p+ ( -- n4 n3 n2 n1 )
+   !a !a !a ;        ( +3)
+
+: !na ( n -- )     \ store into a neighbor's data space
+   @p+ !a !a ;       @p+ !a ; ( -- )  ( +2)
+
+: !na+ ( n -- )    \ store into a neighbor's data space and increment its A
+   @p+ !a !a ;       @p+ !a+ ; ( -- )  ( +2)
+
+
+: n; ( -- )        \ release neighbor to return to its port's caller
+   @p+ !a ;          ; ( -- )  ( +2)
+
+\ -------------------------------------------------------------------------------
+\ neighbor's neighbor accesses use one of the 4 neighbor's rom/ram routines to
+\ access data in one of its 3 other neighbors as above.
+
+\ : nwake ( na -- )  \ wake a neighbor's neighbor
+\    @p+ !a !a ;       @p+ wake ( -- adr ) ( +2)
+
+: nna! ( -- )      \ set neighbor's neighbor's A register for data access
+   @p+ !a ;          na! ( adr -- ) ( +2)
+
+: nnjump ( adr -- ) \ neighbor's neighbor jumps to adr, returns to port's caller
+   @p+ !a !a ;       @p+ njump -; ( -- ) ( +2)
+
+: nncall ( adr -- ) \ neighbor's neighbor calls adr, returns to port
+   @p+ !a !a ;       @p+ ncall ( -- )  ( +2)
+
+
+: @nna ( -- n )    \ fetch from a neighbor's neighbor's data
+   @p+ !a . .        @na     ( -- n )
+   <n -;             \ !p+ ; ( n -- ) ( +3)
+
+: @nna+ ( -- n )   \ fetch from a neighbor's neighbor's data and increment its A
+   @p+ !a . .        @na+    ( -- n )
+   <n -;             \ !p+ ; ( n -- ) ( +3)
+
+: !nna ( n -- )    \ store into a neighbor's neighbor's data
+   @p+ !a !a ;       @p+ !na -; ( -- ) ( +2)
+
+: !nna+ ( n -- )   \ store into a neighbor's neighbor's data and increment its A
+   @p+ !a !a ;       @p+ !na+ -; ( -- ) ( +2)
+
+
+: nn; ( -- )       \ release neighbor's neighbor to return to its port's caller
+   @p+ !a ;          n; -; ( -- ) ( +2)
+
+
+\ ------------------------------------------------------------------------------
+\   This can be extended in a similar fashion to  @nnna  and  !nnna. Note that
+\ if a node only needs to move data to a neighbor's neighbor it doesn't need
+\ @na/!na, only @nna/!nna, and the neighbor may only need @na/!na.
+
+

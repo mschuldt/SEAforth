@@ -1,0 +1,255 @@
+( $Id: ddr-sram.mf,v 1.3.4.3 2006-09-21 02:50:06 randy Exp $ )
+false value ddrtest
+decimal
+machine-forth
+\ all but last two read cycles
+[ $2000e ] equ lrk1  \ ld_->0, oe->0, rw_->1, k->0 continue address n+2... (read n...)
+[ $2000f ] equ lrk2  \ ld_->0, oe->0, rw_->1, k->1 start address n+4... (read n+1...)
+
+\ idle cycles and last two read cycles (4 words)
+[ $3000e ] equ lrk3  \ ld_->1, oe->0, rw_->1, k->0 idle, (read n+4...)
+[ $3000f ] equ lrk4  \ ld_->1, oe->0, rw_->1, k->1 idle, (read n+5...)
+
+\ all but last write cycle
+[ $2100a ] equ lrk5  \ ld_->0, oe->1, rw_->0, k->0 continue address n... (write n...)
+[ $2100b ] equ lrk6  \ ld_->0, oe->1, rw_->0, k->1 start address n+2... (write n+1...)
+
+\ last (pipelined) write cycle (2 words)
+[ $3100a ] equ lrk7  \ ld_->1, oe->1, rw_->0, k->0 idle, (write n+2...)
+[ $3100b ] equ lrk8  \ ld_->1, oe->1, rw_->0, k->1 idle, (write n+3...)
+
+\ xread2s loops reading external pairs at address and incrementing address by 1 on each loop
+\ xfill xread2s 4 words into buffer and writes buffer to ROM
+\ xflush does lrk2 and lrk4 cycles to flush the buffer
+
+[ ddrtest ] [if] \ john's ddr-sram testing
+
+[ $86 org ]
+
+  [ $10000 ] equ idle
+  [ $01004 ] equ rw
+  [ $11004 ] equ idle+rw
+
+  \ Note: The A register is preserved through all these words
+
+  : toggle ( ? 1 lrk? io data addr lrk? io xa tog -- io xa 1 lrk* io data addr lrk* io xa )
+     dup push push +          \ note: + drop  ==  drop drop
+     drop pop xor dup
+     dup drop drop +
+     drop drop drop
+     pop xor dup dup
+     drop drop drop
+     drop ; ( +7)
+
+  : rsetup ( -- io xa=0 1 lrk2 io data addr lrk1 io xa=0 )
+     [ 1 ]# lrk2 'iocs dup    \ s: 1 lrk2 io io
+     push 'data 'addr lrk1    \ s: 1 lrk2 io data addr lrk1
+     pop ( io ) dup dup       \ s: ? 1 lrk2 io data addr lrk1 io io io
+     xor dup dup              \ s: 1 lrk2 io data addr lrk1 io 0 0 0
+     drop drop ; ( +11)       \ s: io 0 1 lrk2 io data addr lrk1 io 0
+
+  : xread2s ( xa 1 lrk2 io data addr lrk1 io xa cnt -- io xa++ 1 lrk2 io data addr lrk1 io xa++ )
+     for
+       push b! !b          \ r=xa b=io lrk1 stored to io
+       b! pop !b dup       \ r=count b=addr stored xa to addr t=data s=data   send the addr
+       push b! @b          \ t=read-4 b=data
+       !a+ b! !b           \ stored data.read-4 to a+ b=io lrk2 stored to io
+       pop b! . +          \ b=data t=xa+   the stack has been spun and has wrapped
+       @b dup drop         \ t=read-3 keeps circular stack balanced
+       !a+ next
+     ; ( +9)
+
+  : xwrite2s ( xa 1 lrk6 io data addr lrk5 io xa cnt -- ..... xa+ )  \
+     for                                   \ io xa 1 lrk6 io data addr lrk5 io xa            r: .. cnt
+       ( sa) push ( iocs) b! ( lrk5) !b .  \ data addr lrk5 io xa 1 lrk6 io data addr    lrk5 sent b=io    r: .. cnt xa
+       ( addr) b! pop ( sa) !b ( data) dup \ data addr lrk5 io xa 1 lrk6 io data data    xa sent   b=addr
+       push b! @a+ ( w0) .                 \ io data addr lrk5 io xa 1 lrk6 io n         read n    b=data
+       !b ( iocs) b! ( lrk6) !b .          \ xa 1 lrk6 io data addr lrk5 io xa 1         store n   b=io
+       pop ( data) b! ( sa 1) . +          \ io xa 1 lrk6 io data addr lrk5 io xa+       inc xa    b=data
+       @a+ ( w1) dup drop .                \ xa+ 1 lrk6 io data addr lrk5 io xa+ n2      read n2 wrap stack
+       !b next                             \ io xa+ 1 lrk6 io data addr lrk5 io xa+      store n2
+     ; ( +9)
+
+  : xfill ( ... xa -- ... xa++ )
+  : rflush2 ( io xa 1 lrk2 io data addr lrk1 io xa -- ... ) \ a=dest b=data
+  : rflush4 ( io xa 1 lrk2 io data addr lrk1 io xa -- ... )
+  : wsetup ( ? ? 1 lrk2 io data addr lrk1 io xa -- ? ? ? 1 lrk6 io data addr lrk5 io )
+  ( +36=aa)
+ ;   \ exit compiling loop
+[else] \ Jeff's code
+
+[ $80 org ]
+
+  : xfill ( ... xa -- ... xa++ )
+   dup dup xor 1      \ 1 lrk2 io data adr lrk1 io xa dest(rom) cnt(1)
+
+  \ 82
+  : xread2s ( 1 lrk2 io data addr lrk1 io xa dest cnt -- ... xa++ )
+   push a!               \ a=dest r=count
+   begin
+     push b! !b          \ r=xa b=io lrk1 stored to io
+     b! pop !b dup       \ r=count b=addr stored xa to addr t=data s=data   send the addr
+     push b! @b          \ t=read-4 b=data
+     !a+ b! !b           \ stored data.read-4 to a+ b=io lrk2 stored to io
+     pop b! . +          \ b=data t=xa+   the stack has been spun and has wrapped
+     @b dup drop         \ t=read-3 keeps circular stack balanced
+   !a+ next
+  ;                      \ a=dest b=data
+
+  \ 8b
+
+  \ needs to do lrk3 lrk4 two times to flush 4 items before write
+  : rflush4 ( io xa 1 lrk2 io data addr lrk1 io xa -- ... )
+   [ 1 ] +fwd rflush2   \ create fwd ref
+    rflush2             \ call fwd ref, next line builds rflush2
+  : rflush2 ( io xa 1 lrk2 io data addr lrk1 io xa -- ... ) \ a=dest b=data
+   drop b! $10000         \ lrk1 io xa 1 lrk2 io data addr lrk1 $10000     dropped xa    b=io
+   xor !b drop            \ io data addr lrk1 io xa 1 lrk2 io data         lrk3 stored to io
+   b! @b drop             \ lrk2 io data addr lrk1 io xa 1 lrk2 io         fetch         b=data
+   b! $10000  xor         \ 1 lrk2 io data addr lrk1 io xa 1 lrk4                        b=io
+   !b drop ;              \ io xa 1 lrk2 io data addr lrk1 io xa           lrk4 stored to io
+
+  \ 92
+  : rsetup ( -- 1 lrk2 io data addr lrk1 io xa.0 ) \ set b to io
+   1  lrk2 'iocs dup        \ 1 lrk2 io io
+   push 'data 'addr lrk1    \ 1 lrk2 io data addr lrk1                    r: ret io
+   pop ( io ) dup pop '-d-- \ 1 lrk2 io data addr lrk1 io io ret down
+   push push dup dup        \ 1 lrk2 io data addr lrk1 io io io io
+   b! xor ;                 \ io io 1 lrk2 io data addr lrk1 io 0
+
+  \ 9e
+
+  : wsetup ( io xa 1 lrk2 io data addr lrk1 io xa -- .. .. .. 1 lrk6 io data addr lrk5 io )
+   drop push drop          \ data addr lrk1 io xa 1 lrk2 io data addr     r: .. r1 io
+   push push push          \ 1 lrk2 io data addr lrk1 io xa 1 lrk2        r: .. r1 io addr data io
+   drop lrk6 pop           \ 1 lrk2 io data addr lrk1 io xa 1 lrk6 io     r: .. r1 io addr data
+   pop pop lrk5            \ addr lrk1 io xa 1 lrk6 io data addr lrk5     r: .. r1 io
+   pop ;                   \ .. .. .. 1 lrk6 io data addr lrk5 io         r: ..
+
+  \ a6
+  \ 80-a3 used
+  \ a5-b6 free  for use of boot code in rombios.mf
+  \ b7-bf used
+
+  [ $b7 org ]       \ called at count 220 in test   cnt=0 dest=22 a=old-dest becomes source
+  \ assumes a=input pointer to be used with @a+
+
+             ( io xa 1 lrk2 io data addr lrk1 io xa )
+
+  : xwrite2s ( xa 1 lrk6 io data addr lrk5 io xa cnt -- ..... xa+ )  \
+   push                                  \ io xa 1 lrk6 io data addr lrk5 io xa            r: .. cnt
+   begin
+     ( sa) push ( iocs) b! ( lrk5) !b .  \ data addr lrk5 io xa 1 lrk6 io data addr    lrk5 sent b=io    r: .. cnt xa
+     ( addr) b! pop ( sa) !b ( data) dup \ data addr lrk5 io xa 1 lrk6 io data data    xa sent   b=addr
+     push b! @a+ ( w0) .                 \ io data addr lrk5 io xa 1 lrk6 io n         read n    b=data
+     !b ( iocs) b! ( lrk6) !b .          \ xa 1 lrk6 io data addr lrk5 io xa 1         store n   b=io
+     pop ( data) b! ( sa 1) . +          \ io xa 1 lrk6 io data addr lrk5 io xa+       inc xa    b=data
+     @a+ ( w1) dup drop .                \ xa+ 1 lrk6 io data addr lrk5 io xa+ n2      read n2 wrap stack
+   !b next                               \ io xa+ 1 lrk6 io data addr lrk5 io xa+      store n2
+  ; ( +9)
+
+[then]
+
+\ 80  b7-bf
+
+[ 0 ] [if] \ John's Documentation
+
+\ John's initial code
+
+: xread2 ( 1 lrk2 io data addr lrk1 io sram-adr dest cnt -- ..... sram-adr+ )
+   push a!
+   begin
+     ( sa) push ( iocs) b! ( lrk1) !b .
+     ( addr) b! pop ( sa) !b ( data) dup
+     push b! @b ( w0) .
+     !a+ ( iocs) b! ( lrk2) !b .
+     pop ( data) b! ( sa 1) . +
+     @b ( w1) dup drop . \ saves new sa in circular stack
+   !a+ next
+   ; ( +9)
+
+: xwrite2 ( 1 lrk6 io data addr lrk5 io sram-adr src cnt -- ..... sram-adr+ )
+   push a!
+   begin
+     ( sa) push ( io) b! ( lrk5) !b .
+     ( addr) b! pop ( sa) !b ( data) dup
+     push b! @a+ ( w0) .
+     !b ( io) b! ( lrk6) !b .
+     pop ( data) b! ( sa 1) . +
+     @a+ ( w1) dup drop . \ saves new sa in circular stack
+   !b next
+   ; ( +9)
+
+\ ddr-sram interface description
+
+The fastest clock I can generate (and read/write pairs of words) is 15-20 MHz.
+By circulating 8 items on the data stack I avoid the memory access time of
+fetching literals, but there are still five fetch/store address changes during
+each clock cycle. It's slow enough that the ram's dll must be turned off!
+
+read ddr burst access
+
+            _______ ______________________________ ________________________
+   address  __n+2__X____________n+4_______________XXXXXXXXXXXXXXXXXXXXXXXXX
+                   ^                              ^
+                   |                              |
+                      __________     __________     ___________     _______
+   data     ------<X><____n_____><X><___n+1____><X><_____n+2___><X><___n+3_
+                   |    |             |           |    |             |
+                   |    |             |           |    |             |
+            __                                _____________________________
+  ld_       __\______________________________/_____________________________
+              ^    |    |    ^        |      ^    |    |    ^        |
+              |    |    |    |        |      |    |    |    |        |
+            _______________________________________________________________
+   rw_      __/
+              ^    |    |    ^        |      ^    |    |    ^        |
+              |    |    |    |        |      |    |    |    |        |
+            __                _______________                ______________
+   K clock    \______________/               \______________/
+              ^    |    |    ^        |      ^    |    |    ^        |
+              |    |    v    |        v      |    |    v    |        v
+             !b   !b   @b   !b       @b     !b   !b   @b   !b       @b
+            lrk1  sa   n0   lrk2     n1    lrk3  sa   n2   lrk4     n3
+
+This code takes 51 'ticks' per cycle saving to ram, 49 to a port, and is
+almost symmetric (26H/25L). That's fpga 'ticks,' so don't know for sure...
+
+Obviously the 'higher-level' code will have to deal with the latency and the
+final two accesses, where ld_ must be raised and the address doesn't need to
+change.
+
+Note that this is about as fast as it can go with the current pinout. And it
+requires an external inverter to get the K_ clock. I'm assuming the byte enables
+are tied low and the C clock inputs tied high.
+
+
+write ddr burst access
+
+            _______ ______________________________ ________________________
+   address  __n____X____________n+2_______________XXXXXXXXXXXXXXXXXXXXXXXXX
+                   ^                              ^
+                   |                              |
+                         ____________  _______________  ____________  _____
+   data     ------------<____n_______><___n+1_________><_____n+2____><_n+3_
+                   |    ^             ^           |    ^             ^
+                   |    |             |           |    |             |
+            __                                _____________________________
+  ld_       __\______________________________/_____________________________
+              ^    |    |    ^        |      ^    |    |    ^        |
+              |    |    |    |        |      |    |    |    |        |
+            __
+   rw_      __\____________________________________________________________
+              ^    |    |    ^        |      ^    |    |    ^        |
+              |    |    |    |        |      |    |    |    |        |
+            __                _______________                ______________
+   K clock    \______________/               \______________/
+              ^    |    |    ^        |      ^    |    |    ^        |
+              |    |    |    |        |      |    |    |    |        |
+             !b   !b   !b   !b       !b     !b   !b   !b   !b       !b
+            lrk5  sa   n0   lrk6     n1    lrk7  sa   n2   lrk8     n3
+
+Same timing for write as for read. Same issues to deal with.
+
+[then]
+[

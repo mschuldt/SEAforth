@@ -1,0 +1,24 @@
+cr .( $Id: crawl.mf,v 1.1.2.1 2006-09-15 16:54:59 dylan Exp $ )
+machine-forth
+[ decimal 45 org ]
+
+: go ( t:direction 	r:next.route)
+  b! 63 push n
+  			dup xor a! .
+  dup !b !b dup
+  xor a! n  n
+  			n !a+ . .
+			n push ;
+  begin
+    over !b @a+ .
+  !b next
+  !b pop !b .
+  cold -;
+
+
+: R 'r--- go -;
+: D '-d-- go -;
+: L '--l- go -;
+: U '---u go -;					( =19)
+
+[

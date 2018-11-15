@@ -1,0 +1,83 @@
+( $Id: buffer.mf,v 1.3.4.3 2006-08-25 23:40:31 randy Exp $ ) 
+\ sram buffer code in node 6
+
+\ sleeps only on r--- and copies two words at a time
+
+decimal
+machine-forth
+[ 63 ] equ size        \ buffer-size must be 2^n, with size = 2^n - 1
+
+[ $08000 ] equ inport  \ (right) write: 1=asleep waiting
+[ $04000 ] equ outport \ (down)   read: 0=asleep waiting
+
+[  17 ] +fwd status
+[  21 ] +fwd unload
+
+\ x0 called by [ . . . . ] [ @p+ x0 -; ] [ ' fa ] in port or cpy routine
+
+: x0 ( size out in fa -- size out in )
+   push @p+ pop .      @p+ [ 0 's exforthlet ] call ( +2)
+
+: 2!orbuf ( size out in 1st 2nd -- size out in )
+ ( soi12)  push push .                 \ o=i means empty
+ ( soi)    over over xor
+ ( soif)   outport status
+ ( soiff)  + if                        \ buffer not empty or n0 busy
+ ( soif)     drop a! pop
+ ( so1)      !a+ pop !a+
+ ( so)       over a@ and
+ ( soi)      begin
+               over over xor           \ o=i means full only here
+ ( soif)       if
+                 drop ;                \ at least one empty buffer pair
+               then
+               drop unload
+ ( soi)        again
+ ( soif)   then
+           drop pop !b         ( w.1 ) \ empty AND n0 asleep
+ ( soi)    pop !b ;            ( w.2 ) ( +15)
+
+: status ( mask -- f )
+ ( m)      'iocs b! @b .
+ ( mp)     and '-d-- b! ;      ( +4)
+
+: unload ( s o i -- s o i )
+ ( soi)    outport status
+ ( soif)   if                          \ busy
+             drop ;
+           then                      \ not busy: node 0 waiting for 2 words
+           drop push a!
+ ( s)      @a+ !b . .          ( w.1 )
+           @a+ !b a@ .         ( w.2 )
+ ( so)     over and pop ;      ( +8)
+
+: cmd ( size out-ptr in-ptr x -- s o i x )
+ ( soix)   begin
+             drop . . .
+ ( soi)      r---                      \ will sleep until input received
+
+             begin
+             [ swap ]                  \  dest1 dest2 -> dest2 dest1
+               over over xor           \ o=i means empty
+ ( soif)   until \ not empty
+               drop unload
+ ( soi)        inport status
+ ( soif)       if  \ new input waiting
+                 cmd -;
+               then
+             drop again      ( +10)
+
+[ 0 ] [if] \ not used any more?!
+\ called by [ @p+ cpy ] [ xa1 ] [ xa2 ] [ n ] [ n+1(even) data words] in port
+: cpy ( oia-oi)
+ ( oi2)    push @p+ pop .      @p+ mem-exec
+ ( oi12)   2!orbuf             ( @p+ xx, xa1 )
+ ( oi)     pop a! @a+
+ ( oia)    @a+ a@ over
+ ( oianpn) 2/ for
+ ( oianp)    push 2!orbuf      ( xa2, n, w.1, w.2, ... )
+ ( oi)       pop a! @a+
+ ( oi1)      @a+ a@ next               \ slot2 ok at x2-x6, xa-xe
+ ( oi12p)  drop 2!orbuf -;     ( w.n, w.n+1 ) ( +10=93)
+[then]
+[

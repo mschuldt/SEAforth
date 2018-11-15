@@ -1,0 +1,28 @@
+cr .( $Id: test.mf,v 1.7.2.2 2006-09-15 16:54:59 dylan Exp $ ) \ test
+machine-forth
+[ hex 0 org ]
+: test
+  D		\  9
+  L		\ 10
+  R		\ 11
+  U		\ 17
+  R		\ 16
+  D		\ 22
+  L		\ 21
+  D		\ 15
+  R		\ 14
+  D		\ 20
+  L		\ 19
+  R		\ 18
+  D		\ 12
+  R		\ 13
+  U		\  7
+  L		\  8
+  D		\  2
+  R		\  3
+  dup dup xor $3f
+  dump
+  cold -;
+  
+					( =43)
+[

@@ -1,0 +1,49 @@
+( $Id: wake.mf,v 1.3.4.3 2006-08-25 23:40:31 randy Exp $ ) \ 
+\ table wake routines
+
+decimal
+machine-forth 
+
+: na>a ( NSEW|na|rd -- ) \ convert NSEW index to single port address from table
+   3 and NSEW +
+   a! @a a! ;        ( +4)
+
+: .... ( NSEW|na|rd -- 0|adr|rd' .... )
+   dup na>a                            \ set A reg to NSEW port
+   2/ 2/ @p+ ;     . . . .    ( +3)  \ prepare to awaken that neighbor
+
+
+
+[ 0 ] [if] \ used like this in rombios.mf ------------------------------------------
+
+$000b2 equ NSEW
+
+$0b2 org
+
+\    NORTH      SOUTH      EAST       WEST            \ NSEW table
+  t' -d-- ,  t' ---u ,  t' r--- ,  t' --l- , ( +4=b6) \ for node 2
+
+include wake.mf   ( +7=bd) \ words: na>a ....
+
+: x0 ( fa -- )
+   [ route EAST 3 's x0 >njump ]# .... \ DS: fa [@p+ x0 -;] ....  A: east
+   !a !a !a ;       ( +3=80)
+
+\ ---old version
+
+: wake ( NSEW|na|rd -- 0|adr|rd' ) \ set A reg to NSEW port and wake that neighbor
+   dup na>a
+   2/ 2/ @p+ dup   . . . .
+   !a !a ;        ( +4)
+
+include wake.mf   ( +8=bc) \ words: na>a wake
+
+: x0 ( fa -- )
+   [ route EAST 3 's x0 neighbor ]# wake ( +2=be)
+: ntjump ( n adr -- ) \ neighbor jumps to adr with n on it's stack
+   @p+ !a !a .       @p+ push @p+ ;
+   !a ;              ( +3=81)
+
+[then] \ -----------------------------------------------------------------------
+
+[

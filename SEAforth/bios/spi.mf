@@ -1,0 +1,94 @@
+( $Id: spi.mf,v 1.3.4.2 2006-08-25 23:40:31 randy Exp $ ) 
+\ spi boot driver with only READ command implemented
+
+decimal
+machine-forth
+[ sim ] [if]
+         [ 2 ] equ 64words \ shorter for simulation
+         [ 0 ] equ 250khz  \ faster for simulation
+[else]
+        [ 63 ] equ 64words
+       [ 497 ] equ 250Khz  \ #loops  =  ((5*10^8ns / 250khz) - 12ns) / 4ns per
+[then]                 \    ^-half-cycle-^               overhead   loop
+
+
+\ the 'w' on the top of the stack is used as an 18-bit left-shift register,
+\ with output from bit17 and input to bit0
+
+[ $0002a ] equ ---   \ write 0 bit, read bit
+[ $0002b ] equ --+
+[ $0003a ] equ +--   \ write 1 bit
+[ $0003b ] equ +-+
+
+[ $0002f ] equ -++   \ select (with --+ )
+
+
+: half ( dly w ctrl - dly w)
+   !b over for
+     . . . unext               \ loop body = 4ns
+   ;               ( +3)       \ loop overhead = 12ns
+
+: select ( dly w - dly w)      \ spi chip select
+   -++ half
+   --+ half -;     ( +4)
+
+: obit ( dly w - dly w)        \ output T[17]
+   -if
+     +-- half
+     +-+ half -;   ( +5)       \ output = 1
+
+: rbit ( dly w - dly w)        \ output = 0, same as read bit
+   then
+   --- half
+   --+ half -;     ( +4)
+
+: 8obits ( dly w - dly w')
+   7 for
+     obit
+     2* next
+   ;               ( +5)
+
+: ibit ( dly w - dly w')
+   @b -if
+     drop not 2* ;             \ input = 1
+   then
+   drop 2* not ;   ( +3)       \ input = 0
+
+: 18ibits ( dly x - dly w)
+   17 for
+     rbit                      \ read bit
+     ibit                      \ determine if it's 0 or 1
+   not next
+   ;               ( +6)
+
+: spi-boot ( dly - dly)
+   $00c00 select               \ bits 17:10 are command
+   8obits                      \ send 8 bit command (read = 03)
+   8obits                      \ send 16 bit address (shifted = 0)
+   8obits                      \ leaves zero, used as ram boot address
+: spi-exec ( dly adr - dly)    \ load & execute 64 word packet at adr (port/mem)
+   dup push 64words
+: spi-copy ( dly adr n - dly)  \ copy next n-word packet to adr
+   push a!
+   begin                       \ T: dly  R: rtn cnt  A: dest
+     dup 18ibits
+     !a+ next
+   ;               ( +11)
+
+[ 0 ] [if]
+
+: spi-route ( rd)              \ open a route from node 11 determined by rd
+   @p+ .... -;         @p+ route ( +2=bf)    ( 2)
+
+: spi-send ( dly n - dly)  \ send n-word packet along opened route
+   push a@ pop @p+     @p+ ;:                ( 4)
+                       ( n - 1)              ( 5)
+   !a dup !a @p+       begin @p+ . !a+ unext ( 6)
+   !a spi-copy         ( n words)            ( *)
+   @p+ !a ;            ; ( +7=86)            ( 7)
+
+\ : spi-xxgo ( dly - dly )   \ load & execute a packet at caller's location
+\    pop spi-xx -; ( +1=87)
+
+[then]
+[

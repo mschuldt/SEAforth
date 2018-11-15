@@ -1,0 +1,227 @@
+cr .( $Id: math-lib.mf,v 1.3 2006-03-25 00:56:02 michael Exp $ ) \ john: miscellaneous math routines, candidates for all roms
+
+\ 12/28/05 collected neighbor fetch/store words here
+\ 1/03/06  added neighbor jump/call words
+\ 1/21/06  removed neighborhood code; replaced with math routines
+\ 1/22/06  added neg, version of f*f dependent on Chuck's fix
+\ 2/20/06  mm: added Moving Average Filter primitive
+
+0 [if] \ -----------------------------------------------------------------------
+
+   Various useful math fragments are collected here. Some may be stuffed into
+ niches in the roms, or can be included in the ram code where needed. Note that
+ only the needed portions of words with multiple entries can be used.
+
+[then] \ -----------------------------------------------------------------------
+
+: 512/ ( n -- n/512 )
+   2/ 2/ 2/
+: 64/ ( n -- n/64 )
+   2/ 2/ 2/
+: 8/ ( n -- n/8 )
+   2/ 2/ 2/ ;  ( +3)
+
+: 512* ( n -- n*512 )
+   2* 2* 2*
+: 64* ( n -- n*64 )
+   2* 2* 2*
+: 8* ( n -- n*8 )
+   2* 2* 2* ;  ( +3)
+
+: u2/ ( n -- n>>1 )
+   2/ [ $1ffff ]# and ; ( +2)
+
+: negate ( n -- -n ) \ only 2 words when used in-line
+   not [ 1 ]# . +
+   ; ( +3)
+
+0 [if] \ -----------------------------------------------------------------------
+
+JR wants at least 16 bits of signed data for both operands, which are fractions
+less than one(?). I think allowing 1.0 to be represented exactly is more general
+(and useful?), and also requires no code changes to do a mixed integer-fraction
+multiply (result is an integer). As was true of the NOVIX/RTX, overflow at any
+step generates an incorrect result (all steps here must maintain the two sign
+bits, with the final result less than |2.0|).
+
+'normalized' 17bit 2's complement representation: [ss ifff ffff ffff ffff]
+ where s=sign bits, i=integer bit, and f=fractional bits
+
+Credit Michael with the novel substitution of T[0] which allows using +* to
+speed up the routine!
+
+The current multiply step needs to be corrected when S is negative. Until the
+fix Chuck is making is tested, the f*f routine is bigger/slower than it might
+be.
+
+[then] \ -----------------------------------------------------------------------
+
+\ When +* is a signed multiply step:
+\ must be at x0-x4, x7-xc, xf for slot2 branch to reach destination
+
+: f*f ( x y -- x*y ) \ x,y - 17 bit 2's comp fractions [ss ifff ffff ffff ffff]
+
+   a! 2* . .
+   [ $04000 ]# [ 15 ]# push .  ( S:2x  T:1/2  A:y  R:15 )
+
+   begin
+     2/ 2* a@ dup
+     2/ dup a! .
+     2* xor xor .
+     +* next                   ( S:2x  T:1/2 + x*y  A:0|-1  R:rtn )
+
+   push a@ -if                 \ fix if y<0  \ slot2 ok at x0-x4, x7-xc, xf
+     + not pop .               \ adding -1 before invert to negate S
+     + ;
+
+   then
+   drop drop pop ; ( +12)      \ 299 ticks (+2 if y<0)
+
+0 [if] \ to leave x on the stack: ( x y -- x x*y )
+
+   ... next
+   push a@ -if                 \ fix if y<0  \ slot2 ok at x0-x3, x7-xb, xf
+     drop 2/ a@ .
+     + not pop .               \ adding -1 before invert to negate S
+     + ;
+
+   then
+   drop 2/ pop ; ( +13)        \ 299 ticks (+6 if y<0)
+
+[then]
+
+0 [if] \ if y is always positive:
+
+ ( x y -- x*y )
+
+   ... next
+   push drop pop ; ( +9)       \ 299 ticks
+
+ ( x y -- x x*y )
+
+   ... next
+   push 2/ pop ; ( +9)         \ 299 ticks
+
+[then]
+
+\ Unrolling the loop once is 10% faster and 25% larger:
+\ must be at x0, x8 for slot2 branches
+
+: f*f ( x y -- x*y ) \ x,y - 17 bit 2's comp fractions [ss ifff ffff ffff ffff]
+   a! 2* . .
+   [ $04000 ]# [ 7 ]# push .   \ 2x 1/2 A:y R:15
+   begin
+     2/ 2* a@ dup
+     2/ dup a! .
+     2* xor xor .              \ nop needed for +* carry propagate
+     +* 2/ 2* .
+     a@ dup 2/ dup
+     a! 2* xor +               \ nop needed for +* carry propagate
+     . +* next                 \ slot2 ok at x6, xe \ 2x x*uy+1/2 A:0|-1 R:rtn
+   push a@ -if                 \ slot2 ok at x0-x4, x7-xc, xf
+     + not pop .               \ add -1 before inverting instead of +1 after
+     + ;                       \ subtract 2x for unlike signs
+   then
+   drop drop pop ; ( +15)      \ 269 ticks (+2 if y<0)
+
+
+\ ok, now for a divide routine: 17 bit positive integers
+\ this isn't optimized (yet) but is serviceable
+\ it could be made into u/mod very easily
+\ and a fractional division routine can be based on this also
+
+: u/ ( num den -- quo )
+   a@ push 2*                \ A is preserved
+   a! negate
+   [ 0 ]# [ 16 ]# for        \ s: -den  t: 0 (num.hi)  a: num.lo  r: #bits
+   begin                     \ both branches of IF have have copies of NEXT
+     a@ -if
+       drop not 2*           \ T[0] <- 1 (denominator[i])
+     else
+       drop 2* not           \ T[0] <- 0 (denominator[i])
+     then
+     not over . +
+     -if
+       a@ 2* a!              \ A[0] <- 0 (quotient[i])
+       over negate           \ restore T
+       + [ ( dest src - src dest ) rot ] next
+     else
+       a@ not 2*             \ A[0] <- 1 (quotient[i])
+       not a!
+       [ ( dest src - src dest ) rot ] next
+     then                    \ s: -den  t: rem  a: quo  r: rtn
+   drop drop a@
+   pop a! ;  ( +20) \ takes ~763 ticks [45+17*29+{4*(n[i]=1)}+{14*(q[i]=0)}]
+
+\ in-lining the 2nd call to negate goes about 20% faster and is 10% larger
+
+: u/ ( num den -- quo )
+   a@ push 2*                \ A is preserved
+   a! negate
+   [ 0 ]# [ 16 ]# for        \ s: -den  t: 0 (num.hi)  a: num.lo  r: #bits
+   begin                     \ both branches of IF have have copies of NEXT
+     a@ -if
+       drop not 2*           \ T[0] <- 1 (numerator[i])
+     else
+       drop 2* not           \ T[0] <- 0 (numerator[i])
+     then
+     not over . +
+     -if
+       a@ 2* a!              \ A[0] <- 0 (quotient[i])
+       over not . +
+       [ 1 ]# . +            \ restore T
+       [ ( dest src - src dest ) rot ] next
+     else
+       a@ not 2*             \ A[0] <- 1 (quotient[i])
+       not a!
+       [ ( dest src - src dest ) rot ] next
+     then                    \ s: -den  t: rem  a: quo  r: rtn
+   drop drop a@
+   pop a! ;  ( +22) \ takes ~614 ticks [45+17*29+{4*(n[i]=1)}+{7*(q[i]=0)}]
+
+\ Moving Average Filter. The primitive assumes, that A points
+\ on the tail of cyclic buffer, and it is up to upper application
+\ to wrap it around when it reaches it's upper boundary.
+\ the idea of this filter is to interperet buffer's sum as
+\ non-normalized filtered sample, calculating it recurrently as:
+\ FS[n+1] := FS[n] + IS[n+1]-IS[n-BS], where
+\ FS - filtered sample
+\ IS - input sample
+\ BS - averaging buffer size
+
+\ Step-by-step stack diagram:
+\                   FS[n]  IS[n+1]
+\ @a                FS[n]  IS[n+1]  IS[n-BS]
+\ over              FS[n]  IS[n+1]  IS[n-BS]  IS[n+1]
+\ not + not         FS[n]  IS[n+1]  IS[n+1]-IS[n-BS]
+\ push !a+ pop      FS[n]  IS[n+1]-IS[n-BS]
+\                   IS[n+1] replaces IS[n-BS],
+\                   A points to the next sample in the buffer
+\ . +               FS[n+1]
+
+: maf ( previously_filtered_sample new_sample -- filtered_sample )
+   @a   over not  +
+   not  push !a+  .
+   pop  .    +    ;      ( +3) \ 23 clocks
+
+0 [if] \ above needs to be 4 words or change the parameters
+
+: maf ( previously_filtered_sample new_sample -- filtered_sample )
+   @a  over not  .
+   +   not  push .
+   !a+ pop  .    +
+   ;                ( +4)  \ 22 clocks
+
+: maf ( previously_filtered_sample new_sample -- filtered_sample )
+   @a   over !a+ .
+   push not  pop .
+   +    not  .   +
+   ;                ( +4)  \ 23 clocks
+
+: maf2 ( FS[n] IS[n-BS] IS[n+1] --  FS[n+1] IS[n+1-BS] )
+   dup a!+ not .
+   +   not .   +
+   @a ;             ( +3) \ 19 clocks
+
+[then]
+

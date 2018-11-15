@@ -1,0 +1,1109 @@
+( $Id: rombios.mf,v 1.3.4.10 2006-09-14 22:11:06 randy Exp $ ) 
+\ rom source code for all 24 nodes of ar24c18
+
+decimal
+
+global-node
+
+\ literals and port address calls
+sim [if] 
+        7 equ 1024times
+        7 equ  512times
+[else] 
+     1023 equ 1024times \ count for startup pin toggles on 2, 4, 11, 19, 20 & 22
+     511 equ  512times \ count for startup d2a ramp on 18 & 23
+[then] 
+
+ $0015d equ 'iocs
+ $00171 equ 'addr
+ $00141 equ 'data
+
+ $1d5 equ 'r---
+ $115 equ '-d--
+ $175 equ '--l-
+ $145 equ '---u
+
+ $1a5 equ 'rdlu
+ $1b5 equ 'rdl-
+ $185 equ 'rd-u
+ $195 equ 'rd--
+ $1c5 equ 'r--u
+
+ $0b2 equ NSEW      \ routing table standard location
+
+ $000 fwd ram0
+ $0bd fwd x0        \ sram server request standard location
+
+ $1d5 fwd r---
+ $115 fwd -d--
+ $175 fwd --l-
+ $145 fwd ---u
+
+ $1a5 fwd rdlu
+ $1b5 fwd rdl-
+ $185 fwd rd-u
+ $195 fwd rd--
+ $1c5 fwd r--u
+
+machine-forth 
+
+[ 1 .node! ] \ bottom router ==================================================
+
+[ $0b2 org ]
+
+ ,north  ,south  ,east  ,west    \ NSEW table
+
+[ include wake.mf ] ( +7=bd) \ words: na>a ....
+
+: x0 ( fa -- )
+   [ route EAST 2 's x0 >njump ]# .... \ DS: fa [@p+ x0 -;] ....  A: port
+   !a !a !a ;       ( +3=80)
+
+[ $080 org ]
+
+[ include uppause.mf ] ( +7=87)    \ must be at x0, x8, x[odd] for slot2 ops
+
+[ $08f org ]
+
+[ include route.mf ] ( +27=aa) \ must be at x7, xf for slot2 branches to reach
+
+[ $0aa org ]
+
+: cold
+   'iocs b! . . ( +2=ac)
+: warm ( -- x )
+   'rdl- a! @a .                \ 3-way sleep
+   @b pause
+   warm -; ( +4=b0)
+
+[ 0 .node! ] \ corner sram server =============================================
+
+\ sleeps by jumping to down port; wake-ups MUST be calls
+
+[ include ddr-sram.mf ]
+
+[ $aa org ]
+
+: cold
+   rsetup                             \ ?  ?  1 lrk2 io data addr lrk1 io xa=0
+   @b -if
+     drop . . .
+: exforthlet          \ execute a native forthlet load 4 word boot loader and jump into it
+     xfill ( ... xa++ ) \ fill the buffer writing to rom   xram 0-3 to ram buffer t=2=xa
+     dup dup xor dup    \ 2(xa) 0(dest) 0(ret.adr)
+     push n [ 1 ], .       \ ... 0(dest) 1(cnt)    load 4 more words to pipe and 0-3 to 0-3 local ram
+     xread2s -;         \ t=2(xa)    0=load.adr 1=cnt 2=res 3=res
+     dup . . .          \ "returns" to 0 at count b0
+   then
+   drop . . .
+   -d-- -;              \ jump to down and go to sleep for now
+
+\ aa-b5  b6 free a6-a9 free b7-bf is 9 words=xwrite2s  2/4/6
+
+[ 2 .node! ] \ bottom  router =================================================
+
+[ $0b2 org ]
+
+ ,north  ,south  ,east  ,west    \ NSEW table
+
+[ include wake.mf ]  ( +7=bd) \ words: na>a ....
+
+: x0 ( fa -- )
+   [ route NORTH 8 's x0 >njump ]# .... \ DS: fa [@p+ x0 -;] ....  A: port
+   !a !a !a ;       ( +3=80)
+
+[ $080 org ]
+
+[ include uppause.mf ] ( +7=87)    \ must be at x0, x8, x[odd] for slot2 ops
+
+: pintest ( -- )
+   1024times for
+     $30000 !b  $20000 .
+   !b next
+   ; ( +7=8e)
+
+[ $08f org ]
+
+[ include route.mf ] ( +27=aa) \ must be at x7, xf for slot2 branches to reach
+
+[ $0aa org ]
+
+: cold
+   'iocs b! . . ( +3=ad)
+   pintest
+: warm ( -- x )
+   'rdl- a! @a .                \ 3-way sleep
+   @b pause
+   warm -; ( +4=b1)
+
+\ aa-b0 cold warm pintest
+\ b1 free           1 free after call to pintest added
+\ b2-bc wake
+\ bd-bf x0
+\ 80-86 pause
+\ 87-8d pintest
+\ 8e free           1 free
+\ 8f-a9 route
+
+
+[ 3 .node! ] \ bottom serial server ===========================================
+
+[ 1 ] [if] \ older version of x0, with no NSEW table or code, so serial code fits
+
+[ $0b9 org ]
+
+: (x0) ( fa p -- )
+   a! @p+ @p+ .       @p+ x0 -; 
+                      . . . .
+   !a !a !a ;     ( +4=bd)
+
+: x0 ( fa -- )  \ request sent EAST to node 4
+   '--l- (x0) -;      ( +2=bf)
+
+[else] \ new NSEW table version
+
+[ $0b2 org ]
+
+ ,north  ,south  ,east  ,west    \ NSEW table
+
+[ include wake.mf ]  ( +7=bd) \ words: na>a ....
+
+: x0 ( fa -- )
+   [ route EAST 4 's x0 >njump ]# .... \ DS: fa [@p+ x0 -;] ....  A: port
+   !a !a !a ;       ( +3=80)
+
+[then]
+
+[ $080 org ]
+
+[ include uppause.mf ] ( +7=87)    \ must be at x0, x8, x[odd] for slot2 ops
+
+[ $088 org ]
+
+[ include serial.mf ] ( +33=a9)  \ must be at x0-x1, x5-x9, xd-xf for slot2 ops
+
+[ $0a9 org ]
+
+: work ( iocs -- )
+   begin pause       ( +1=aa)
+: cold ( -- )
+     . 'iocs b! 'rdlu          \ sleep on 3 ports & wakeup pin
+     a! @a drop
+   @b -until         ( +5=af)  \ do serial boot if pin high
+: ser-boot ( x -- )            \ load & execute 64 word data packet at ram 0
+   dup xor 64words   ( +2=b1)
+: ser-exec ( adr n -- )        \ copy an n-word packet to adr & execute
+   push dup a! dup
+   begin                       \ DS: rtn x  A: dest  RS: cnt
+     drop 18ibits
+     drop !a+ next             \ slot2 ok at x1-x6, x9-xe
+   drop push ;       ( +4=b5)
+
+
+
+[ 4 .node! ]  \ bottom router ==================================================
+
+[ $0b2 org ]
+
+ ,north  ,south  ,east  ,west    \ NSEW table
+
+[ include wake.mf ]  ( +7=bd) \ words: na>a ....
+
+: x0 ( fa -- )
+   [ route NORTH 10 's x0 >njump ]# .... \ DS: fa [@p+ x0 -;] ....  A: port
+   !a !a !a ;       ( +3=80)
+
+[ $080 org ]
+
+[ include uppause.mf ] ( +7=87)    \ must be at x0, x8, x[odd] for slot2 ops
+
+: pintest ( -- )
+   1024times for
+     $30000  !b $20000 .
+     . . !b .
+   next
+   ;  ( +8=8f)
+
+[ $08f org ]
+
+[ include route.mf ] ( +27=aa) \ must be at x7, xf for slot2 branches to reach
+
+[ $0aa org ]
+
+: cold
+   'iocs b! . . ( +3=ad)
+   pintest
+: warm ( -- x )
+   'rdl- a! @a .                \ 3-way sleep
+   @b pause
+   warm -; ( +4=b1)
+
+\ aa-b0 cold warm pintest
+\ b1 free           1 free after call to pintest added
+\ b2-bc wake
+\ bd-bf x0
+\ 80-86 pause
+\ 87-8e pintest
+\ 8f-a9 route
+
+[ 5 .node! ] \ corner spi server ==============================================
+
+[ $0b2 org ]
+
+ ,north  ,south  ,east  ,west    \ NSEW table
+
+[ include wake.mf ] ( +7=bd)        \ words: na>a ....
+
+: x0 ( fa -- )
+   [ route WEST 4 's x0 >njump ]# .... \ DS: fa [@p+ x0 -;] ....  A: port
+   !a !a !a ;   ( +3=80)
+
+[ $080 org ]
+
+[ include spi.mf ] ( +41=a9)
+
+[ $0aa org ]
+
+: cold
+   . 'iocs b! 250khz    ( +3=ad)
+: warm ( dly -- dly )
+   @b -if                      \ pin is high [=1] (no boot)
+     -d--                      \ sleep at down port (NORTH, 11)
+     drop warm -; 
+   then
+   drop spi-boot -;     ( +4=b1)
+
+[then]
+
+[ 6 .node! ] \ side ram input buffer ==========================================
+
+[ $0b2 org ]
+
+ ,north  ,south  ,east  ,west    \ NSEW table
+
+[ include wake.mf ] ( +7=bd)        \ words: na>a ....
+
+[ $0bd org ] \ 1st word in buffer.mf is  x0  to be in the same location as the rest
+
+[ include buffer.mf ] ( +39=a4) \ uses 5 R-stack locations and 8 D-stack
+
+[ $0aa org ]
+
+: cold ( -- )
+   . . . size
+   dup dup xor dup          \ o=i means empty
+   dup cmd -;      ( +4=ae) \ DS: size out-ptr in-ptr x
+
+
+[ 7 .node! ]  \ center router ==================================================
+
+[ $0b2 org ]
+
+ ,north  ,south  ,east  ,west    \ NSEW table
+
+[ include wake.mf ] ( +7=bd)        \ words: na>a ....
+
+: x0 ( fa -- )
+   [ route WEST 6 's x0 >njump ]# .... \ DS: fa [@p+ x0 -;] ....  A: port
+   !a !a !a ;       ( +3=80)
+
+[ $080 org ]
+
+. . . .   \ put pause on odd address
+[ include centerpause.mf ] ( +9=8a) \ must be x[odd] for slot2 ops
+
+[ $08f org ]
+
+[ include route.mf ] ( +27=aa) \ must be at x7, xf for slot2 branches to reach
+
+[ $0aa org ]
+
+: cold
+   'iocs b! . . ( +2=ac)
+: warm ( -- x )
+   'rdlu a! @a .                \ 4-way sleep
+   @b pause
+   warm -; ( +4=b0)
+
+
+[ 8 .node! ]  \ center router ==================================================
+
+[ $0b2 org ]
+
+ ,north  ,south  ,east  ,west    \ NSEW table
+
+[ include wake.mf ] ( +7=bd)        \ words: na>a ....
+
+: x0 ( fa -- )
+   [ route WEST 7 's x0 >njump ]# .... \ DS: fa [@p+ x0 -;] ....  A: port
+   !a !a !a ;       ( +3=80)
+
+[ $080 org ]
+
+. . . .   \ put pause on odd address
+[ include centerpause.mf ] ( +9=8a) \ must be x[odd] for slot2 ops
+
+[ $08f org ]
+
+[ include route.mf ] ( +27=aa) \ must be at x7, xf for slot2 branches to reach
+
+[ $0aa org ]
+
+: cold
+   'iocs b! . . ( +2=ac)
+: warm ( -- x )
+   'rdlu a! @a .                \ 4-way sleep
+   @b pause
+   warm -; ( +4=b0)
+
+
+[ 9 .node!  ] \ center =========================================================
+
+[ $0b2 org ]
+
+ ,north  ,south  ,east  ,west    \ NSEW table
+
+[ include wake.mf ] ( +7=bd)        \ words: na>a ....
+
+: x0 ( fa -- )
+   [ route WEST 8 's x0 >njump ]# .... \ DS: fa [@p+ x0 -;] ....  A: port
+   !a !a !a ;       ( +3=80)
+
+[ $080 org ]
+
+. . . .   \ put pause on odd address
+[ include centerpause.mf ] ( +9=8a) \ must be x[odd] for slot2 ops
+
+[ $08f org ]
+
+[ include route.mf ] ( +27=aa) \ must be at x7, xf for slot2 branches to reach
+
+[ $0aa org ]
+
+: cold
+   'iocs b! . . ( +2=ac)
+: warm ( -- x )
+   'rdlu a! @a .                \ 4-way sleep
+   @b pause
+   warm -; ( +4=b0)
+
+
+[ 10 .node! ] \ center router ==================================================
+
+[ $0b2 org ]
+
+ ,north  ,south  ,east  ,west    \ NSEW table
+
+[ include wake.mf ] ( +7=bd)        \ words: na>a ....
+
+: x0 ( fa -- )
+   [ route WEST 9 's x0 >njump ]# .... \ DS: fa [@p+ x0 -;] ....  A: port
+   !a !a !a ;       ( +3=80)
+
+[ $080 org ]
+
+. . . .   \ put pause on odd address
+[ include centerpause.mf ] ( +9=8a) \ must be x[odd] for slot2 ops
+
+[ $08f org ]
+
+[ include route.mf ] ( +27=aa) \ must be at x7, xf for slot2 branches to reach
+
+[ $0aa org ]
+
+: cold
+   'iocs b! . . ( +2=ac)
+: warm ( -- x )
+   'rdlu a! @a .                \ 4-way sleep
+   @b pause
+   warm -; ( +4=b0)
+
+
+[  11 .node!  ] \ side router ====================================================
+
+[ $0b2 org ]
+
+ ,north  ,south  ,east  ,west    \ NSEW table
+
+[ include wake.mf ] ( +7=bd)        \ words: na>a ....
+
+: x0 ( fa -- )
+   [ route SOUTH 5 's x0 >njump ]# .... \ DS: fa [@p+ x0 -;] ....  A: port
+   !a !a !a ;       ( +3=80)
+
+[ $080 org ]
+
+[ include leftpause.mf ] ( +8=88) \ must be at x0-2, x8-a, x[odd] for slot2 ops
+
+[ $088 org ]
+
+: pintest
+   b! 1024times for
+     $3ffff  !b . $2aaaa 
+     !b next
+    ; ( +7=8f)
+
+[ $08f org ]
+
+[ include route.mf ] ( +27=aa) \ must be at x7, xf for slot2 branches to reach
+
+[ $0aa org ]
+
+: cold
+   'iocs pintest                \ b! . . ( +2=ac)
+: warm ( -- x )
+   'rd-u a! @a .                \ 3-way sleep
+   @b pause
+   warm -; ( +4=b0)
+
+\ aa-af cold warm test
+\ b0-b1 free        2 free after call to test
+\ b2-bc wake
+\ bd-bf x0
+\ 80-87 pause
+\ 88-8e test
+\ 8f-a9 route
+
+
+[  12 .node! ]  \ side serial server =============================================
+
+[ 1 ] [if] \ older version of x0, with no NSEW table or code, so serial code fits
+
+[ $0b9 org ]
+
+: (x0) ( fa p -- )
+   a! @p+ @p+ .       @p+ x0 -; 
+                      . . . .
+   !a !a !a ;     ( +4=bd)
+
+: x0 ( fa -- )  \ request sent EAST to node 13
+   'r--- (x0) -;      ( +2=bf)
+
+[else] \ new NSEW table version
+
+[ $0b2 org ]
+
+\    NORTH      SOUTH      EAST       WEST            \ NSEW table
+[  ' -d-- ,  ' ---u ,  ' r--- ,  ' --l- , ] ( +4=b6) \ for node 12
+ ,north  ,south  ,east  ,west    \ NSEW table
+
+[ include wake.mf  ] ( +7=bd) \ words: na>a ....
+
+: x0 ( fa -- )
+   [ route EAST 13 's x0 >njump ]# .... \ DS: fa [@p+ x0 -;] ....  A: port
+   !a !a !a ;       ( +3=80)
+
+[then]
+
+[ $080 org ]
+
+[ include leftpause.mf ] ( +8=88) \ must be at x0-2, x8-a, x[odd] for slot2 ops
+
+[ $088 org ]
+
+[ include serial.mf ] ( +33=a9)  \ must be at x0-x1, x5-x9, xd-xf for slot2 ops
+
+[ $0a9 org ]
+
+: work ( iocs -- )
+   begin pause       ( +1=aa)
+: cold ( -- )
+     . 'iocs b! 'rdlu          \ sleep on 3 ports & wakeup pin
+     a! @a drop
+   @b -until         ( +5=af)  \ do serial boot if pin high
+: ser-boot ( x -- )            \ load & execute 64 word data packet at ram 0
+   dup xor 64words   ( +2=b1)
+: ser-exec ( adr n -- )        \ copy an n-word packet to adr & execute
+   push dup a! dup
+   begin                       \ DS: rtn x  A: dest  RS: cnt
+     drop 18ibits
+     drop !a+ next             \ slot2 ok at x1-x6, x9-xe
+   drop push ;       ( +4=b5)
+
+
+[  13 .node! ] \ center router ==================================================
+
+[ $0b2 org ]
+
+ ,north  ,south  ,east  ,west    \ NSEW table
+
+[ include wake.mf ] ( +7=bd)        \ words: na>a ....
+
+: x0 ( fa -- )
+   [ route SOUTH 7 's x0 >njump ]# .... \ DS: fa [@p+ x0 -;] ....  A: port
+   !a !a !a ;       ( +3=80)
+
+[ $080 org ]
+
+. . . .   \ put pause on odd address
+[ include centerpause.mf ] ( +9=8a) \ must be x[odd] for slot2 ops
+
+[ $08f org ]
+
+[ include route.mf ] ( +27=aa) \ must be at x7, xf for slot2 branches to reach
+
+[ $0aa org ]
+
+: cold
+   'iocs b! . . ( +2=ac)
+: warm ( -- x )
+   'rdlu a! @a .                \ 4-way sleep
+   @b pause
+   warm -; ( +4=b0)
+
+
+[ 14 .node! ] \ center router ==================================================
+
+[ $0b2 org ]
+
+ ,north  ,south  ,east  ,west    \ NSEW table
+
+[ include wake.mf ] ( +7=bd)        \ words: na>a ....
+
+: x0 ( fa -- )
+   [ route WEST 13 's x0 >njump ]# .... \ DS: fa [@p+ x0 -;] ....  A: port
+   !a !a !a ;       ( +3=80)
+
+[ $080 org ]
+
+. . . .   \ put pause on odd address
+[ include centerpause.mf ] ( +9=8a) \ must be x[odd] for slot2 ops
+
+[ $08f org ]
+
+[ include route.mf ] ( +27=aa) \ must be at x7, xf for slot2 branches to reach
+
+[ $0aa org ]
+
+: cold
+   'iocs b! . . ( +2=ac)
+: warm ( -- x )
+   'rdlu a! @a .                \ 4-way sleep
+   @b pause
+   warm -; ( +4=b0)
+
+[ 15 .node! ] \ center router ==================================================
+
+[ $0b2 org ]
+
+\    NORTH      SOUTH      EAST       WEST            \ NSEW table
+[ ' -d-- ,  ' ---u ,  ' --l- ,  ' r--- , ] ( +4=b6) \ for node 15
+
+[ include wake.mf ] ( +7=bd)        \ words: na>a ....
+
+: x0 ( fa -- )
+   [ route SOUTH 9 's x0 >njump ]# .... \ DS: fa [@p+ x0 -;] ....  A: port
+   !a !a !a ;       ( +3=80)
+
+[ $080 org ]
+
+. . . .   \ put pause on odd address
+[ include centerpause.mf ] ( +9=8a) \ must be x[odd] for slot2 ops
+
+[ $08f org ]
+
+[ include route.mf ] ( +27=aa) \ must be at x7, xf for slot2 branches to reach
+
+[ $0aa org ]
+
+: cold
+   'iocs b! . . ( +2=ac)
+: warm ( -- x )
+   'rdlu a! @a .                \ 4-way sleep
+   @b pause
+   warm -; ( +4=b0)
+
+[ 16 .node!  ] \ center router ==================================================
+
+[ $0b2 org ]
+
+ ,north  ,south  ,east  ,west    \ NSEW table
+
+[ include wake.mf ] ( +7=bd)        \ words: na>a ....
+
+: x0 ( fa -- )
+   [ route SOUTH 10 's x0 >njump ]# .... \ DS: fa [@p+ x0 -;] ....  A: port
+   !a !a !a ;       ( +3=80)
+
+[ $080 org ]
+
+. . . .   \ put pause on odd address
+[ include centerpause.mf ] ( +9=8a) \ must be x[odd] for slot2 ops
+
+[ $08f org ]
+
+[ include route.mf ] ( +27=aa) \ must be at x7, xf for slot2 branches to reach
+
+[ $0aa org ]
+
+: cold
+   'iocs b! . . ( +2=ac)
+: warm ( -- x )
+   'rdlu a! @a .                \ 4-way sleep
+   @b pause
+   warm -; ( +4=b0)
+
+
+[  17 .node! ]  \ side serial server =============================================
+
+[ 1 ] [if] \ older version of x0, with no NSEW table or code, so serial code fits
+
+[ $0b9 org ]
+
+: (x0) ( fa p -- )
+   a! @p+ @p+ .       @p+ x0 -; 
+                      . . . .
+   !a !a !a ;     ( +4=bd)
+
+: x0 ( fa -- )  \ request sent WEST to node 16
+   'r--- (x0) -;      ( +2=bf)
+
+[else] \ new NSEW table version
+
+[ $0b2 org ]
+
+ ,north  ,south  ,east  ,west    \ NSEW table
+
+[ include wake.mf ]  ( +7=bd) \ words: na>a ....
+
+: x0 ( fa -- )
+   [ route WEST 16 's x0 >njump ]# .... \ DS: fa [@p+ x0 -;] ....  A: port
+   !a !a !a ;       ( +3=80)
+
+[then]
+
+[ $080 org ]
+
+[ include leftpause.mf ] ( +8=88) \ must be at x0-2, x8-a, x[odd] for slot2 ops
+
+[ $088 org ]
+
+[ include serial.mf ] ( +33=a9)  \ must be at x0-x1, x5-x9, xd-xf for slot2 ops
+
+[ $0a9 org ]
+
+: work ( iocs -- )
+   begin pause       ( +1=aa)
+: cold ( -- )
+   . 'iocs b! 'rdlu          \ sleep on 3 ports & wakeup pin
+   a! @a drop
+   @b -until         ( +5=af)  \ do serial boot if pin high
+: ser-boot ( x -- )            \ load & execute 64 word data packet at ram 0
+   dup xor 64words   ( +2=b1)
+: ser-exec ( adr n -- )        \ copy an n-word packet to adr & execute
+   push dup a! dup
+   begin                       \ DS: rtn x  A: dest  RS: cnt
+     drop 18ibits
+     drop !a+ next             \ slot2 ok at x1-x6, x9-xe
+   drop push ;       ( +4=b5)
+
+
+[ 18 .node! ]  \ corner analog ==================================================
+
+[ $0b2 org ]
+
+ ,north  ,south  ,east  ,west    \ NSEW table
+
+[ include wake.mf ] ( +7=bd)        \ words: na>a ....
+
+: x0 ( fa -- )
+   [ route SOUTH 12 's x0 >njump ]# .... \ DS: fa [@p+ x0 -;] ....  A: port
+   !a !a !a ;       ( +3=80)
+
+[ $080 org ]
+
+: pause ( 'iocs -- )  \ corner pause
+   2* 2* -if                            \ slot2 ok at x0-x5, x7-xd, xf
+     r---
+   then drop ; ( +3=83)
+
+[ $083 org ]
+
+: ramp ( -- )
+  1  dup dup
+  xor 512times for     ( s: 1 0   r: 511 )
+    dup !b over .
+    + next
+  drop drop ;  ( +7=8a )
+
+
+\ When +* is a signed multiply step:
+\ must be at x0-x4, x7-xc, xf for slot2 branch to reach destination
+
+: f*f ( x y -- x*y ) \ x,y - 17 bit 2's comp fractions [ss ifff ffff ffff ffff]
+   a! 2* . .
+   $04000 15 push .  ( S:2x  T:1/2  A:y  R:15 )
+   begin
+     2/ 2* a@ dup
+     2/ dup a! .
+     2* xor xor .
+     +* next                   ( S:2x  T:1/2 + x*y  A:0|-1  R:rtn )
+   push a@ -if                 \ fix if y<0  \ slot2 ok at x0-x4, x7-xc, xf
+     + not pop .               \ adding -1 before invert to negate S
+     + ; 
+   then
+   drop drop pop  ; ( +12=96)      \ 299 ticks (+2 if y<0)
+
+: 32768/ ( n -- n/32768 )
+   2/ 2/ 2/
+: 4096/ ( n -- n/4096 )
+   2/ 2/ 2/
+: 512/ ( n -- n/512 )
+   2/ 2/ 2/
+: 64/ ( n -- n/64 )
+   2/ 2/ 2/
+: 8/ ( n -- n/8 )
+   2/ 2/ 2/ ;           ( +5)
+
+: 32768* ( n -- n*32768 )
+   2* 2* 2*
+: 4096* ( n -- n*4096 )
+   2* 2* 2*
+: 512* ( n -- n*512 )
+   2* 2* 2*
+: 64* ( n -- n*64 )
+   2* 2* 2*
+: 8* ( n -- n*8 )
+   2* 2* 2* ;           ( +5)
+
+: u2/ ( n -- n>>1 )
+   2/ $1ffff and ; ( +2)
+
+: negate ( n -- -n ) \ only 2 words when used in-line
+   not  1  . +
+   ;                    ( +3)
+
+: maf ( previously_filtered_sample new_sample -- filtered_sample )
+  @a   over not  +
+  not  push !a+  .
+  pop  .    +    ;      ( +3)
+                        ( +18=A8)
+[ $0a8 org ]
+
+: setup
+   b! $1d555 !b ; ( +2=aa)
+
+[ $0aa org ]
+
+: cold
+   'iocs setup \ b! . . ( +3=ad)
+   ramp
+: warm ( -- x )
+   'rd-- a! @a .                \ 2-way sleep
+   @b pause
+   warm -;  ( +4=b1)
+
+\ a8-a9 setup
+\ aa-b0 cold warm
+\ b1 free            1 free after call to test
+\ b2-b5 table
+\ b6-bc wake
+\ bd-bf x0
+\ 80-82 pause
+\ 83-89 ramp       512 incrementing samples to d/a
+\ 8a-a7 free        30 free
+
+
+[ 19 .node! ] \ top router =====================================================
+
+[ $0b2 org ]
+
+ ,north  ,south  ,east  ,west    \ NSEW table
+
+[ include wake.mf ]  ( +7=bd) \ words: na>a ....
+
+: x0 ( fa -- )
+   [ route EAST 20 's x0 >njump ]# .... \ DS: fa [@p+ x0 -;] ....  A: port
+   !a !a !a ;       ( +3=80)
+
+[ $080 org ]
+
+[ include uppause.mf ] ( +7=87)    \ must be at x0, x8, x[odd] for slot2 ops
+
+[ $087 org ]
+
+: pintest
+   b! 1024times for
+     $20003 $30002  . .
+     !b !b . .
+   next
+   ; ( +8=8f)
+
+[ $08f org ]
+
+[ include route.mf ] ( +27=aa) \ must be at x7, xf for slot2 branches to reach
+
+[ $0aa org ]
+
+: cold
+   'iocs pintest ( +2=ac)
+: warm ( -- x )
+   'rdl- a! @a .                \ 3-way sleep
+   @b pause
+   warm -; ( +4=b0)
+
+\ aa-af cold warm test
+\ b0-b1 free        2 free after call to test
+\ b2-bc wake
+\ bd-bf x0
+\ 80-86 uppause
+\ 87-8e pintest
+\ 8f-a9 route
+
+[ 20 .node! ] \ top (analog?) router ===========================================
+
+[ $0b2 org ]
+
+ ,north  ,south  ,east  ,west    \ NSEW table
+
+[ include wake.mf ]  ( +7=bd) \ words: na>a ....
+
+: x0 ( fa -- )
+   [ route SOUTH 14 's x0 >njump ]# .... \ DS: fa [@p+ x0 -;] ....  A: port
+   !a !a !a ;       ( +3=80)
+
+[ $080 org ]
+
+[ include uppause.mf ] ( +7=87)    \ must be at x0, x8, x[odd] for slot2 ops
+
+[ $087 org ]
+
+: pintest
+   b! 1024times for
+   $30002  $20003  . .
+   !b . !b .
+   next
+   ; ( +8=8f)
+
+[ $08f org ]
+
+[ include route.mf ] ( +27=aa) \ must be at x7, xf for slot2 branches to reach
+
+[ $0aa org ]
+
+: cold
+   'iocs \ b! . . ( +3=ad)
+   pintest
+: warm ( -- x )
+   'rdl- a! @a .                \ 3-way sleep
+   @b pause
+   warm -; ( +4=b1)
+
+
+\ aa-b0 cold warm test
+\ b1 free           1 free after call to test
+\ b2-bc wake
+\ bd-bf x0
+\ 80-86 uppause
+\ 87-8e pintest
+\ 8f-a9 route
+
+[ 21 .node! ]  \ top serial server ==============================================
+
+[ 1 ] [if] \ older version of x0, with no NSEW table or code, so serial code fits
+
+[ $0b9 org ]
+
+: (x0) ( fa p -- )
+   a! @p+ @p+ .       @p+ x0 -; 
+                      . . . .
+   !a !a !a ;     ( +4=bd)
+
+: x0 ( fa -- )  \ request sent SOUTH to node 15
+   '-d-- (x0) -;      ( +2=bf)
+
+[else] \ new NSEW table version
+
+[ $0b2 org ]
+
+ ,north  ,south  ,east  ,west    \ NSEW table
+
+[ include wake.mf ]  ( +7=bd) \ words: na>a ....
+
+: x0 ( fa -- )
+   [ route SOUTH 15 's x0 >njump ]# .... \ DS: fa [@p+ x0 -;] ....  A: port
+   !a !a !a ;       ( +3=80)
+
+[then]
+
+[ $080 org ]
+
+[ include uppause.mf ] ( +7=87)    \ must be at x0, x8, x[odd] for slot2 ops
+
+[ $088 org ]
+
+[ include serial.mf ] ( +33=a9)  \ must be at x0-x1, x5-x9, xd-xf for slot2 ops
+
+[ $0a9 org ]
+
+: work ( iocs -- )
+   begin pause       ( +1=aa)
+: cold ( -- )
+     . 'iocs b! 'rdlu          \ sleep on 3 ports & wakeup pin
+     a! @a drop
+   @b -until         ( +5=af)  \ do serial boot if pin high
+: ser-boot ( x -- )            \ load & execute 64 word data packet at ram 0
+   dup xor 64words   ( +2=b1)
+: ser-exec ( adr n -- )        \ copy an n-word packet to adr & execute
+   push dup a! dup
+   begin                       \ DS: rtn x  A: dest  RS: cnt
+     drop 18ibits
+     drop !a+ next             \ slot2 ok at x1-x6, x9-xe
+   drop push ;       ( +4=b5)
+
+
+[ 22 .node! ] \ top router =====================================================
+
+[ $0b2 org ]
+
+ ,north  ,south  ,east  ,west    \ NSEW table
+
+[ include wake.mf ] ( +7=bd) \ words: na>a ....
+
+: x0 ( fa -- )
+   [ route WEST 21 's x0 >njump ]# .... \ DS: fa [@p+ x0 -;] ....  A: port
+   !a !a !a ;       ( +3=80)
+
+[ $080 org ]
+
+[ include uppause.mf ] ( +7=87)    \ must be at x0, x8, x[odd] for slot2 ops
+
+[ $087 org ]
+
+: pintest
+   b! 1024times for
+     $20003  $30002 !b .
+     . . . .
+   !b next
+   ; ( +8=8f)
+
+[ $08f org ]
+
+[ include route.mf ] ( +27=aa) \ must be at x7, xf for slot2 branches to reach
+
+[ $0aa org ]
+
+: cold
+   'iocs pintest ( +2=ac)
+: warm ( -- x )
+   'rdl- a! @a .                \ 3-way sleep
+   @b pause
+   warm -; ( +4=b0)
+
+\ aa-af cold warm test
+\ b0-b1 free        2 free after call to test
+\ b2-bc wake
+\ bd-bf x0
+\ 80-86 uppause
+\ 87-8e pintest
+\ 8f-a9 route
+
+
+[  23 .node! ]  \ corner analog ==================================================
+
+[ $0b2 org ]
+
+ ,north  ,south  ,east  ,west    \ NSEW table
+
+[ include wake.mf ] ( +7=bd)        \ words: na>a ....
+
+: x0 ( fa -- )
+   [ route SOUTH 17 's x0 >njump ]# .... \ DS: fa [@p+ x0 -;] ....  A: port
+   !a !a !a ;       ( +3=80)
+
+[ $080 org ]
+
+: pause ( 'iocs -- )  \ corner pause
+   2* 2* -if                            \ slot2 ok at x0-x5, x7-xd, xf
+     r---
+   then drop ; ( +3=83)
+
+[ $083 org ]
+
+: ramp ( -- )
+  1  dup dup
+  xor 512times for     ( s: 1 0   r: 511 )
+    dup !b over .
+    + next
+  drop drop ;  ( +7=8a )
+
+
+\ When +* is a signed multiply step:
+\ must be at x0-x4, x7-xc, xf for slot2 branch to reach destination
+
+: f*f ( x y -- x*y ) \ x,y - 17 bit 2's comp fractions [ss ifff ffff ffff ffff]
+   a! 2* . .
+   $04000  15 push .  ( S:2x  T:1/2  A:y  R:15 )
+   begin
+     2/ 2* a@ dup
+     2/ dup a! .
+     2* xor xor .
+     +* next                   ( S:2x  T:1/2 + x*y  A:0|-1  R:rtn )
+   push a@ -if                 \ fix if y<0  \ slot2 ok at x0-x4, x7-xc, xf
+     + not pop .               \ adding -1 before invert to negate S
+     + ;
+   then
+   drop drop pop ; ( +12=96)      \ 299 ticks (+2 if y<0)
+
+: 32768/ ( n -- n/32768 )
+   2/ 2/ 2/
+: 4096/ ( n -- n/4096 )
+   2/ 2/ 2/
+: 512/ ( n -- n/512 )
+   2/ 2/ 2/
+: 64/ ( n -- n/64 )
+   2/ 2/ 2/
+: 8/ ( n -- n/8 )
+   2/ 2/ 2/ ;           ( +5)
+
+: 32768* ( n -- n*32768 )
+   2* 2* 2*
+: 4096* ( n -- n*4096 )
+   2* 2* 2*
+: 512* ( n -- n*512 )
+   2* 2* 2*
+: 64* ( n -- n*64 )
+   2* 2* 2*
+: 8* ( n -- n*8 )
+   2* 2* 2* ;           ( +5)
+
+: u2/ ( n -- n>>1 )
+   2/ [ $1ffff ]# and ; ( +2)
+
+: negate ( n -- -n ) \ only 2 words when used in-line
+   not 1 . +
+   ;                    ( +3)
+
+: maf ( previously_filtered_sample new_sample -- filtered_sample )
+  @a   over not  +
+  not  push !a+  .
+  pop  .    +    ;      ( +3)
+                        ( +16=A8)
+[ $0a8 org ]
+
+: setup
+   b!  $0d555 !b ; ( +2=aa) \ changed from $1d555 for shared pin 65
+
+[ $0aa org ]
+
+: cold
+   'iocs setup ( +3=ad)
+   ramp
+: warm ( -- x )
+   'rd-- a! @a .                \ 2-way sleep
+   @b pause
+   warm -; ( +4=b1)
+
+\ a8-a9 setup
+\ aa-b0 cold warm
+\ b1 free            1 free after call to test
+\ b2-b5 table
+\ b6-bc wake
+\ bd-bf x0
+\ 80-82 pause
+\ 83-89 ramp       512 incrementing samples to d/a
+\ 8a-a7 free        30 free
+
+
+\ ==============================================================================
+[

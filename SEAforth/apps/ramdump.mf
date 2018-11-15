@@ -1,0 +1,24 @@
+cr .( $Id: ramdump.mf,v 1.2.2.2 2006-09-15 16:54:59 dylan Exp $) \ octal dump into serial
+machine-forth
+\ RAM dump
+\ don't factor it! (it's shorter this way) 
+: dump ( a c -- ) \ sent octal RAM dump to serial
+  push a! . .
+  begin
+    @a+ not $5 dup 	\ byte loop
+    push push . .	\ "$5 for $5 for"
+    begin
+      dup 2/ 2/ .
+    2/ next
+    begin		\ o0 ... o4 o5		bytes
+      $7 and $9 .	\ bit loop : start-bit + 8 + 1 stop-bit = 10
+      push 2* $61 +	\ lsb=0=hi - start bit : 00000000000110xxx1
+      begin		\ o
+        $2 over over +*	\ o 2 o 1 ( according to rombios echo)
+        $1 push and +	\ delay
+        begin . . . unext
+      !b 2/ next
+    drop next		( +16)
+  next
+;
+[

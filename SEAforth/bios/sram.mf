@@ -1,0 +1,144 @@
+cr .( $Id: sram.mf,v 1.3 2006-03-25 00:56:02 michael Exp $ ) \ 2005-12-27 john: rom source code for static ram driver
+
+\ 1/12/06 bug fix: right -> 'r---  in mem-route
+
+decimal
+
+$0000b equ read
+$0100e equ write
+$0000f equ quiet
+$0003e equ 'shh
+
+$03e fwd shh
+$03f fwd x@+
+
+$083 fwd route
+$096 fwd ;:
+
+$08d org
+
+\ External ram 18-bit vectored read routines
+
+: *shh ( ) \ tristate xram databus
+  quiet !b ; ( +2=8f)
+
+\ returns w, ending read from a-1, starts read from a, and increments to a+1
+: *x@+ ( dly a - dly a+1 w)  \ end one read and start another, preserving A
+  over push
+  begin . . . unext
+  a@ push read 'data
+  a! over 'addr quiet
+  @a ( w) push ( quiet) !b .
+  ( addr) a! ( a ) !a ( read) !b [ 1 ]#
+  ( a 1) + pop ( w) pop .
+  ( ar) a! ; ( +13=9c)
+
+: 1x@+ ( dly xa - dly xa+2 w )   \ first read:
+  x@+                            \ initial read gets garbage
+  drop x@+ -; ( +2=9e)           \ get count
+
+\ ends write to a-1, starts write of w to a, and increments to a+1
+: x!+ ( dly a w - dly a+)   \ end one write and start another, preserving A
+  push over push
+  begin . . . unext
+  write over 'addr
+  pop a@ quiet 'data
+  ( data) a! ( quiet) !b ( w) !a .
+  ( addr) a! ( a ) !a ( write) !b [ 1 ]#
+  ( a 1 ) + pop ( ar) a! ; ( +12=aa)
+
+$0aa org
+
+: cold                           \ reset with optional xram boot
+  'iocs b! [ 0 ]# 'shh            \ no extra delay for 55ns sram
+  a! @p+ !a+ @p+    *shh -;
+                    *x@+ -;
+  !a+ shh
+  '-d-- push @b
+  not -if
+    drop ;                       \ sleep on down port when pin 24 is low at reset
+  then ( +12=b6)                 \ or boot from forthlet when pin 24 is high
+
+: mem-boot ( dly x - dly )
+  dup xor ( +1=b7)
+
+: mem-exec ( dly fa - dly )      \ load and execute a forthlet at address 0 in ram
+  dup dup xor dup ( +1=b8)
+
+: ex@s ( dly fa la ea - dly )    \ load a forthlet at la and execute it at ea
+  push a! ( +1=b9)
+
+: @forthlet ( dly fa - dly)      \ load forthlet from xram via A register
+  1x@+ ( +1=ba)
+
+: mem-copy ( dly fa+2 cnt - dly ) \ copy xram words to destination in A
+  for
+    x@+
+    !a+ next
+  drop shh -; ( +4=be)
+
+: mem-open ( rd)                 \ open a route from node 1 determined by rd
+  'r--- a! @p+ @p+   @p+ open-route        ( 2)
+                     . . . .               ( 1)
+  !a !a !a ;         ( descriptor)         ( 3) ( +5=83)
+
+: mem-send ( dly fa - dly)       \ copy a forthlet in xram to an opened route
+  1x@+
+  @p+ !a dup .       @p+ send-msg          ( 4)
+                     ( count)              ( 5)
+  !a @p+ !a .        begin @p+ . !a+ unext ( 6)
+  mem-copy -;        ( count+1 words)      ( *) ( +6=89)
+
+: mem-close ( -- )
+  @p+ !a ;           close-route -;        ( 7) ( +2=8b)
+
+0 [if] \ simple sram interface
+
+ read access
+
+             ________________________________ ____________________________
+    address  ________________________________X____________________________
+                                             ^
+                                             |
+             ______________________               ________________________
+    data     ______________________>-------------<________________________
+                           |       ^         |   ^
+                           |       |         |   |
+                                   ______________
+    ram oe   _____________________/              \________________________
+                           |       ^         |   ^
+                           |       |         |   |
+             _____________________________________________________________
+    ram we
+                           |       ^         |   ^
+                           V       |         |   |
+
+    es@+ code      ...] [ @a push  !b ] [ a! !a  !b  1 ] [...
+                           (18b) (quiet) (fa)   (read)
+
+ write access
+
+             _________________________________ ____________________________
+    address  _________________________________X____________________________
+                                              ^
+                                              |
+             ___________________                   ________________________
+    data     ___________________>-----------------<________________________
+                               ^     ^        |   ^
+                               |     |        |   |
+             ______________________________________________________________
+    ram oe
+                               |     |        |   |
+                               |     |        |   |
+                                __________________
+    ram we   __________________/                  \________________________
+                               ^     |        |   ^
+                               |     |        |   |
+
+    es!+ code     ...] [ quiet !b   !a ] [ a! !a  !b  1 ] [...
+                           (quiet) (18b)   (fa)  (write)
+
+ Register usage (may not be optimal)
+    B always contains [iocs]
+    A preserves [memory/port address], then alternates between [data] and [addr]
+[then]

@@ -1,0 +1,10 @@
+machine-forth 
+
+[ 3 .node! ] 
+
+[ decimal 22 org ]
+[ include  ramdump.mf ] 
+[ include crawl.mf ]     \ 46 decimal org
+[ include test.mf ]      \ 0 org
+		
+[

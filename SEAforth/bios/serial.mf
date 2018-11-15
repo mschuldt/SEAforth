@@ -1,0 +1,91 @@
+( $Id: serial.mf,v 1.3.4.4 2006-08-25 23:40:31 randy Exp $ ) 
+\ serial port drivers with hardcoded echo
+
+decimal
+machine-forth
+[ sim ] [if]
+         [ 1 ] equ 64words
+[else]
+        [ 63 ] equ 64words
+[then]
+
+[ $00002 ] equ echo-lo
+[ $00003 ] equ echo-hi
+
+[ $0aa ] fwd cold
+
+: wait ( x -- )                \ wait for high bit
+   begin drop @b -until        \ slot2 ok at x0-x6,x8-xe
+: echo1 ( x -- )
+   drop echo-hi !b ;   ( +3=8b)
+
+: sync ( -- delay )            \ wait for high bit; count until low bit
+   dup wait
+   $20006 for
+     @b -if  [ rot ]           \  dest src -> src dest 
+     drop next
+     cold -;                   \ input stayed high, so sleep on any port
+   then
+   drop pop not
+   . 2* 2/
+: echo0
+   begin
+     echo-lo !b ;      ( +10=95)
+
+: 18ibits ( -- delay word x )  \ reads three 8n1 bytes from serial pin
+   sync
+   drop sync
+   [ 12 ] +fwd start
+   dup start
+   [ 5 ] +fwd 2bits
+   2bits
+   [ 1 ] +fwd byte
+   byte
+: byte ( n w b -- n w' b' )
+   drop start
+   [ 1 ] +fwd 4bits
+   4bits
+: 4bits
+   2bits
+: 2bits
+   [ 1 ] +fwd 1bit
+     1bit
+: 1bit ( n w b -- n w' b' )
+   push 2/  $1ffff dup
+   not pop and
+   push and pop +
+   [ 4 ] +fwd delay
+   over push delay -; ( +14=a3) \ slot2 ok at x0-x3, x7-xb, xf
+
+: start ( delay word - delay word b )
+   dup wait                  \ wait for start bit
+   over dup 2/ .             \ skip start bit and 1/2 into 1st data bit
+   + push            ( +3=a6)
+: delay ( n w' -- n w' b' )    \ count is already in R
+   begin . next
+   @b -until                   \ to echo0
+   dup echo1 -;        ( +3=a9)
+
+
+[ 0 ] [if] \ notes on serial protocol
+
+
+    This is a model of input to the serial port. The data is in 8n1 format,
+  breaking each 18-bit data word into 3 bytes as shown. The low six bits are set
+  to 0x2D to ensure that the c18 can time the first start bit. The mark-space
+  voltages are inverted so it looks like this:
+
+              ___________       ___________       _____ _____ _____
+  1st     ___/           \_____/           \_____/     \_____X_____\___
+  byte  stop  start  [0]   [1]   [2]   [3]   [4]   [5]    0     1   stop
+
+              _____ _____ _____ _____ _____ _____ _____ _____ _____
+  2nd     ___/     \_____X_____X_____X_____X_____X_____X_____X_____\___
+  byte  stop  start   2     3     4     5     6     7     8     9   stop
+
+              _____ _____ _____ _____ _____ _____ _____ _____ _____
+  3rd     ___/     \_____X_____X_____X_____X_____X_____X_____X_____\___
+  byte  stop  start   10    11    12    13    14    15    16    17  stop
+
+[then]
+[
